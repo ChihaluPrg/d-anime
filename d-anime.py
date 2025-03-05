@@ -32,6 +32,8 @@ ANIME_CONFIG_FILE = os.path.join(BASE_DIR, "anime_configs.json")
 # Discord Bot のトークン（自分のトークンに置き換えてください）
 DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
 
+# ※ UTTA チャンネルは本コードでは使用しません。
+
 # グローバル変数にアニメ設定情報（リスト）を格納
 anime_configs = []
 # 例:
@@ -40,7 +42,7 @@ anime_configs = []
 #       "name": "アニメ名",
 #       "url": "https://...",
 #       "data_file": "last_episode_アニメ名.json",
-#       "target_channel_ids": [専用チャンネルID, 他通知先ID...]
+#       "target_channel_ids": [専用チャンネルID, その他通知先ID...]
 #   },
 #   ...
 # ]
@@ -114,8 +116,7 @@ def extract_episode_num(text):
 
 def get_latest_episode(url):
     """
-    指定された URL のアニメページから最新エピソードの情報を取得し、
-    辞書形式で返す。
+    指定された URL のアニメページから最新エピソードの情報を取得し、辞書形式で返す。
 
     戻り値の例:
       {
@@ -235,7 +236,10 @@ async def anime_list(ctx):
 @anime.command(
     name="add",
     with_app_command=True,
-    description="新たなアニメ通知設定を追加し、最新エピソード情報を表示します。なお、専用のテキストチャンネルを自動作成します。"
+    description=("新たなアニメ通知設定を追加します。\n"
+                 "・自動作成された専用チャンネル（アニメ名そのまま）に最新エピソードを通知します。\n"
+                 "・既に追加済みの場合は追加できません。\n"
+                 "・通知メッセージはコマンド実行チャンネルにも送信されます。")
 )
 async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: commands.Greedy[discord.TextChannel] = None):
     """
@@ -245,14 +249,20 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
       • name: アニメの名称
       • url: アニメページの URL
       • data_file (任意): 通知状態を保存するファイル名（未指定の場合、自動生成）
-      • channels: 通知先のチャンネル（任意。自動で専用チャンネルも作成します）
+      • channels: 他に通知先として追加するチャンネル（任意）
     """
     if ctx.guild is None:
         await ctx.send("このコマンドはサーバー内でのみ使用可能です。")
         return
 
+    # ②同一アニメが既に追加されている場合は中断
+    for conf in anime_configs:
+        if conf.get("name").lower() == name.lower():
+            await ctx.send(f"**{name}** は既に追加されています。")
+            return
+
     # 自動で専用テキストチャンネルを作成する
-    # ※ 指定のカテゴリID(1346005111964700684)内に作成し、チャンネル名はアニメの名前そのままとする
+    # ※ 指定のカテゴリID(1346005111964700684)内に、チャンネル名をアニメの名前とする
     try:
         category = ctx.guild.get_channel(1346005111964700684)
         if category is None:
@@ -286,21 +296,32 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
     anime_configs.append(new_conf)
     save_anime_configs()
 
-    # 最新エピソード情報の取得
+    # ①最新エピソード情報の取得と専用チャンネルへの初回通知
     latest = get_latest_episode(url)
     if latest:
-        message = (
+        auto_notify_message = (
+            f"**{name}** の最新エピソード情報:\n"
+            f"{latest['number']} {latest['title']}\n"
+            f"URL: {latest['url']}"
+        )
+        try:
+            await auto_channel.send(auto_notify_message)
+        except Exception as e:
+            logging.error(f"専用チャンネルへの通知送信エラー: {e}")
+        addition_notify = (
             f"**{name}** の設定を追加しました。\n"
-            f"自動作成した専用チャンネル: {auto_channel.mention}\n"
+            f"自動作成された専用チャンネル: {auto_channel.mention}\n"
             f"最新エピソード: {latest['number']} {latest['title']}\n"
             f"URL: {latest['url']}"
         )
     else:
-        message = (
+        addition_notify = (
             f"**{name}** の設定を追加しましたが、最新エピソード情報は取得できませんでした。\n"
-            f"自動作成した専用チャンネル: {auto_channel.mention}"
+            f"自動作成された専用チャンネル: {auto_channel.mention}"
         )
-    await ctx.send(message)
+
+    # ③追加通知をコマンド実行チャンネルに送信
+    await ctx.send(addition_notify)
 
 @anime.command(
     name="remove",

@@ -32,7 +32,8 @@ ANIME_CONFIG_FILE = os.path.join(BASE_DIR, "anime_configs.json")
 # Discord Bot のトークン（自分のトークンに置き換えてください）
 DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
 
-# ※ UTTA チャンネルは本コードでは使用しません。
+# ※ 自動作成される専用チャンネルは、指定のカテゴリID 内に作成します
+CATEGORY_ID = 1346005111964700684
 
 # グローバル変数にアニメ設定情報（リスト）を格納
 anime_configs = []
@@ -42,7 +43,7 @@ anime_configs = []
 #       "name": "アニメ名",
 #       "url": "https://...",
 #       "data_file": "last_episode_アニメ名.json",
-#       "target_channel_ids": [専用チャンネルID, その他通知先ID...]
+#       "target_channel_ids": [自動作成された専用チャンネルID, その他通知先ID...]
 #   },
 #   ...
 # ]
@@ -243,7 +244,7 @@ async def anime_list(ctx):
 )
 async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: commands.Greedy[discord.TextChannel] = None):
     """
-    新しいアニメ設定を追加します。
+    新しいアニメ通知設定を追加します。
 
     パラメータ:
       • name: アニメの名称
@@ -255,16 +256,16 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
         await ctx.send("このコマンドはサーバー内でのみ使用可能です。")
         return
 
-    # ②同一アニメが既に追加されている場合は中断
+    # 同一アニメが既に追加されている場合は中断
     for conf in anime_configs:
         if conf.get("name").lower() == name.lower():
             await ctx.send(f"**{name}** は既に追加されています。")
             return
 
     # 自動で専用テキストチャンネルを作成する
-    # ※ 指定のカテゴリID(1346005111964700684)内に、チャンネル名をアニメの名前とする
+    # ※ 指定のカテゴリID 内に、チャンネル名をアニメの名前そのままとして作成する
     try:
-        category = ctx.guild.get_channel(1346005111964700684)
+        category = ctx.guild.get_channel(CATEGORY_ID)
         if category is None:
             await ctx.send("指定されたカテゴリが見つかりません。")
             return
@@ -296,7 +297,7 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
     anime_configs.append(new_conf)
     save_anime_configs()
 
-    # ①最新エピソード情報の取得と専用チャンネルへの初回通知
+    # 最新エピソード情報の取得と専用チャンネルへの初回通知
     latest = get_latest_episode(url)
     if latest:
         auto_notify_message = (
@@ -320,27 +321,38 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
             f"自動作成された専用チャンネル: {auto_channel.mention}"
         )
 
-    # ③追加通知をコマンド実行チャンネルに送信
+    # 追加通知をコマンド実行チャンネルに送信
     await ctx.send(addition_notify)
 
 @anime.command(
     name="remove",
     with_app_command=True,
-    description="指定したアニメの通知設定を削除します。"
+    description="指定したアニメの通知設定を削除し、自動作成された専用チャンネルも削除します。"
 )
 async def anime_remove(ctx, name: str):
     """
-    指定したアニメ名に一致する設定を削除します。
+    指定したアニメ名に一致する設定を削除し、
+    自動作成された専用チャンネルがあれば、それも削除します。
     """
     global anime_configs
-    removed = False
+    removed_conf = None
     for conf in anime_configs:
         if conf.get("name").lower() == name.lower():
+            removed_conf = conf
             anime_configs.remove(conf)
-            removed = True
             break
-    if removed:
+
+    if removed_conf:
         save_anime_configs()
+        # 自動作成された専用チャンネルを削除（target_channel_ids の最初のチャンネルIDと想定）
+        if "target_channel_ids" in removed_conf and len(removed_conf["target_channel_ids"]) > 0:
+            auto_channel_id = removed_conf["target_channel_ids"][0]
+            auto_channel = ctx.guild.get_channel(auto_channel_id)
+            if auto_channel is not None:
+                try:
+                    await auto_channel.delete(reason="設定削除に伴い自動作成チャンネルを削除")
+                except Exception as e:
+                    logging.error(f"自動作成されたチャンネルの削除エラー: {e}")
         await ctx.send(f"**{name}** の設定を削除しました。")
     else:
         await ctx.send(f"**{name}** に該当する設定が見つかりませんでした。")

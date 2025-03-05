@@ -252,16 +252,18 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
         return
 
     # 自動で専用テキストチャンネルを作成する
-    # (チャンネル名は"anime-<アニメ名>"となる。英数字とハイフン以外は除去)
-    safe_channel_name = re.sub(r'[^a-z0-9\-]', '', name.lower().replace(" ", "-"))
-    channel_name = f"anime-{safe_channel_name}"
+    # ※ 指定のカテゴリID(1346005111964700684)内に作成し、チャンネル名はアニメの名前そのままとする
     try:
-        auto_channel = await ctx.guild.create_text_channel(channel_name, reason="自動作成: アニメ専用通知チャンネル")
+        category = ctx.guild.get_channel(1346005111964700684)
+        if category is None:
+            await ctx.send("指定されたカテゴリが見つかりません。")
+            return
+        auto_channel = await ctx.guild.create_text_channel(name, category=category, reason="自動作成: アニメ専用通知チャンネル")
     except Exception as e:
         await ctx.send(f"専用チャンネルの自動作成に失敗しました: {str(e)}")
         return
 
-    # 初期の通知先として自動作成した専用チャンネルIDをリストに追加
+    # 自動作成した専用チャンネルのIDを初期の通知先として設定
     target_channel_ids = [auto_channel.id]
 
     # コマンド実行時に他のチャンネル指定があれば追加（重複は省く）

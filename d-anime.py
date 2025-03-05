@@ -18,32 +18,32 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-CHECK_INTERVAL = 3600  # 更新チェックの間隔（秒）
+CHECK_INTERVAL = 3600   # 更新チェックの間隔（秒）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 各アニメの状態を保存するディレクトリ
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# アニメ設定情報を保存する JSON ファイル
+# アニメ設定情報ファイル
 ANIME_CONFIG_FILE = os.path.join(BASE_DIR, "anime_configs.json")
-
-# コマンドログ設定用ファイル（/anime cmdlog で設定した送信先チャンネルを保存）
+# コマンドログ設定ファイル（/anime cmdlog で設定した送信先チャンネルを保存）
 CMDLOG_CONFIG_FILE = os.path.join(BASE_DIR, "cmdlog_config.json")
-cmdlog_channel_id = None  # グローバル変数
+cmdlog_channel_id = None  # ※ コマンドログ転送先チャンネルのID（初期はNone）
 
-# Bot のトークン（適宜書き換えてください）
+# Bot のトークン（適宜変更してください）
 DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
 
-# 自動作成される専用チャンネルは、指定のカテゴリ内に作成します（カテゴリID）
+# 自動作成される専用チャンネルは、指定のカテゴリ内に作成（カテゴリID）
 CATEGORY_ID = 1346005111964700684
 
-# ギルド専用コマンド同期用：テスト用ギルドID（必ず自分のテストギルドIDに置き換えてください）
-GUILD_ID = 1346835749877842001  # 例: 123456789012345678
+# ギルド専用コマンド同期用：テスト用ギルドID（必ずご自身のテスト用ギルドIDに変更してください）
+GUILD_ID = 1346835749877842001 # 例: 123456789012345678
 
 # グローバル変数：アニメ設定情報リスト
 anime_configs = []
-# 例: [{ "name": "青のミブロ", "url": "https://example.com", "data_file": "lastepisode青のミブロ.json", "target_channel_ids": [専用チャンネルID, …] }, …]
+# 例: [{"name": "青のミブロ", "url": "https://....", "data_file": "lastepisode青のミブロ.json", "target_channel_ids": [専用チャンネルID, ...]}, ...]
+
 
 # -------------------------------
 # コマンドログ設定用関数
@@ -152,7 +152,7 @@ def get_latest_episode(url):
     if not episodes:
         logging.error("エピソード要素が見つかりませんでした。")
         return None
-    latest_data = None  # (数値, 番号テキスト, タイトル, リンク, サムネイル)
+    latest_data = None  # (エピソード番号, 番号テキスト, タイトル, リンク, サムネイル)
     for ep in episodes:
         number_span = ep.find("span", class_="number")
         title_h3 = ep.find("h3", class_="line2")
@@ -198,12 +198,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @commands.hybrid_group(
     name="anime",
     with_app_command=True,
-    description="アニメ通知設定を管理します。（サブコマンド: list, add, remove, cmdlog）"
+    description="アニメ通知設定を管理します。（subcommands: list, add, remove, cmdlog）"
 )
 @commands.has_permissions(administrator=True)
 async def anime(ctx):
     if ctx.invoked_subcommand is None:
-        await ctx.send("使用可能なサブコマンド: `list`, `add`, `remove`, `cmdlog`")
+        await ctx.send("使用可能な subcommand: `list`, `add`, `remove`, `cmdlog`")
 
 @anime.command(
     name="list",
@@ -225,7 +225,6 @@ async def anime_list(ctx):
             )
         msg = "\n".join(msg_lines)
     await ctx.send(msg)
-    # コマンドログ送信先が設定されていれば、そちらに転送
     if cmdlog_channel_id:
         log_channel = ctx.guild.get_channel(cmdlog_channel_id)
         if log_channel:
@@ -237,18 +236,16 @@ async def anime_list(ctx):
     description=("新たなアニメ通知設定を追加します。\n"
                  "・自動作成された専用チャンネル（アニメ名そのまま）に最新エピソードを初回通知します。\n"
                  "・既に追加済みの場合は追加できません。\n"
-                 "・通知メッセージはコマンド実行チャンネルにも送信され、cmdlogが設定されていれば、そちらにも転送されます。")
+                 "・通知メッセージはコマンド実行チャンネルにも送信され、cmdlogが設定されていればそちらにも転送されます。")
 )
 async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: commands.Greedy[discord.TextChannel] = None):
     if ctx.guild is None:
         await ctx.send("このコマンドはサーバー内でのみ使用可能です。")
         return
-    # 同一アニメが既に登録済みの場合は中断
     for conf in anime_configs:
         if conf.get("name").lower() == name.lower():
             await ctx.send(f"**{name}** は既に追加されています。")
             return
-    # 自動で専用テキストチャンネルを作成
     try:
         category = ctx.guild.get_channel(CATEGORY_ID)
         if category is None:
@@ -258,9 +255,7 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
     except Exception as e:
         await ctx.send(f"専用チャンネルの自動作成に失敗しました: {e}")
         return
-    # 自動作成されたチャンネルIDを通知先リストの最初に追加
     target_channel_ids = [auto_channel.id]
-    # 他に通知先として指定されたチャンネルがあれば追加（重複を省く）
     if channels is not None and len(channels) > 0:
         for ch in channels:
             if ch.id not in target_channel_ids:
@@ -276,7 +271,6 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
     }
     anime_configs.append(new_conf)
     save_anime_configs()
-    # 最新エピソード情報の取得と専用チャンネルへの初回通知
     latest = get_latest_episode(url)
     if latest:
         auto_notify_msg = (
@@ -300,7 +294,6 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
             f"自動作成された専用チャンネル: {auto_channel.mention}"
         )
     await ctx.send(addition_msg)
-    # コマンド実行チャンネルへの転送（cmdlogが設定されていればそちらにも送信）
     if cmdlog_channel_id:
         log_channel = ctx.guild.get_channel(cmdlog_channel_id)
         if log_channel:
@@ -321,7 +314,6 @@ async def anime_remove(ctx, name: str):
             break
     if removed_conf:
         save_anime_configs()
-        # 自動作成された専用チャンネルを削除（target_channel_ids の先頭が自動作成チャンネルと仮定）
         if "target_channel_ids" in removed_conf and len(removed_conf["target_channel_ids"]) > 0:
             auto_channel_id = removed_conf["target_channel_ids"][0]
             auto_channel = ctx.guild.get_channel(auto_channel_id)
@@ -347,7 +339,7 @@ async def anime_remove(ctx, name: str):
 @anime.command(
     name="cmdlog",
     with_app_command=True,
-    description="コマンドログ送信先チャンネルを設定します。チャンネルIDを指定してください。"
+    description="コマンドログ送信先チャンネルを設定します。テキストチャンネルを指定してください。"
 )
 async def anime_cmdlog(ctx, channel: discord.TextChannel):
     global cmdlog_channel_id
@@ -355,7 +347,6 @@ async def anime_cmdlog(ctx, channel: discord.TextChannel):
     save_cmdlog_config()
     msg = f"コマンドログ送信先を {channel.mention} に設定しました。"
     await ctx.send(msg)
-    # 転送メッセージを指定チャンネルにも送信
     await channel.send(f"(CmdLog設定) {msg}")
 
 bot.add_command(anime)
@@ -378,18 +369,15 @@ async def check_anime_updates():
         url = anime_conf["url"]
         data_file = anime_conf["data_file"]
         target_channel_ids = anime_conf["target_channel_ids"]
-
         last_state = load_state(data_file)
         try:
             response = requests.get(url, headers=headers)
         except Exception as e:
             logging.error(f"[{name}] ページ取得エラー: {e}")
             continue
-
         if response.status_code != 200:
             logging.error(f"[{name}] ページ取得失敗 (ステータスコード: {response.status_code})")
             continue
-
         soup = BeautifulSoup(response.text, "html.parser")
         header_elem = soup.find("header", class_="attention onlyPcLayout")
         if header_elem is None:
@@ -408,7 +396,6 @@ async def check_anime_updates():
             else:
                 logging.error(f"[{name}] 完結通知は既に送信済みです。")
             continue
-
         latest_episode = get_latest_episode(url)
         if latest_episode:
             new_episode_num = latest_episode["number"]
@@ -438,12 +425,11 @@ async def check_anime_updates():
 
 @bot.event
 async def on_ready():
-    load_anime_configs()      # アニメ設定読み込み
-    load_cmdlog_config()      # cmdlog設定読み込み
-    # ギルド専用コマンドとして同期（即時反映のため）
+    load_anime_configs()
+    load_cmdlog_config()
     guild = discord.Object(id=GUILD_ID)
     await bot.tree.sync(guild=guild)
     print(f"Bot {bot.user} としてログインしました！")
-    check_anime_updates.start()  # 定期更新チェック開始
+    check_anime_updates.start()
 
 bot.run(DISCORD_BOT_TOKEN)

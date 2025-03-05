@@ -33,8 +33,17 @@ ANIME_CONFIG_FILE = os.path.join(BASE_DIR, "anime_configs.json")
 DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
 
 # グローバル変数にアニメ設定情報（リスト）を格納
-anime_configs = []  # 例：[{ "name": "アニメ名", "url": "https://...", "data_file": "last_episode_xxx.json", "target_channel_ids": [チャンネルID1, チャンネルID2] }, ...]
-
+anime_configs = []
+# 例:
+# [
+#   {
+#       "name": "アニメ名",
+#       "url": "https://...",
+#       "data_file": "last_episode_アニメ名.json",
+#       "target_channel_ids": [専用チャンネルID, 他通知先ID...]
+#   },
+#   ...
+# ]
 
 # -------------------------------
 # 状態管理用関数
@@ -56,13 +65,11 @@ def load_state(data_file):
             return None
     return None
 
-
 def save_state(data_file, state):
     """DATA_DIR 内の指定ファイルに、最新の状態を保存する。"""
     file_path = os.path.join(DATA_DIR, data_file)
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump({"state": state}, f, ensure_ascii=False)
-
 
 # -------------------------------
 # アニメ設定管理用関数
@@ -81,7 +88,6 @@ def load_anime_configs():
     else:
         anime_configs[:] = []
 
-
 def save_anime_configs():
     """グローバル変数 anime_configs を ANIME_CONFIG_FILE に保存する。"""
     try:
@@ -90,15 +96,13 @@ def save_anime_configs():
     except Exception as e:
         logging.error(f"アニメ設定の保存エラー: {e}")
 
-
 # -------------------------------
 # スクレイピング関連の関数
 # -------------------------------
 
 def extract_episode_num(text):
     """
-    「第62話」や「#1」などの文字列から数字部分を抽出して
-    int 型で返す。
+    「第62話」や「#1」などの文字列から数字部分を抽出し、int 型で返す。
     """
     m = re.search(r"第(\d+)話", text)
     if m:
@@ -107,7 +111,6 @@ def extract_episode_num(text):
     if m:
         return int(m.group(1))
     return None
-
 
 def get_latest_episode(url):
     """
@@ -185,14 +188,12 @@ def get_latest_episode(url):
         logging.error("最新エピソード情報が取得できませんでした。")
         return None
 
-
 # -------------------------------
 # Discord Bot のセットアップ
 # -------------------------------
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
-
 
 # ※ チャット履歴一括削除コマンド (/c) は廃止しています
 
@@ -209,7 +210,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def anime(ctx):
     if ctx.invoked_subcommand is None:
         await ctx.send("使用可能なサブコマンド: `list`, `add`, `remove`")
-
 
 @anime.command(
     name="list",
@@ -232,14 +232,12 @@ async def anime_list(ctx):
         )
     await ctx.send("\n".join(msg_lines))
 
-
 @anime.command(
     name="add",
     with_app_command=True,
-    description="新たなアニメ通知設定を追加し、最新エピソード情報を表示します。"
+    description="新たなアニメ通知設定を追加し、最新エピソード情報を表示します。なお、専用のテキストチャンネルを自動作成します。"
 )
-async def anime_add(ctx, name: str, url: str, data_file: str = None,
-                    channels: commands.Greedy[discord.TextChannel] = None):
+async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: commands.Greedy[discord.TextChannel] = None):
     """
     新しいアニメ設定を追加します。
 
@@ -247,12 +245,32 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None,
       • name: アニメの名称
       • url: アニメページの URL
       • data_file (任意): 通知状態を保存するファイル名（未指定の場合、自動生成）
-      • channels: 通知先のチャンネル（1つ以上指定してください）
+      • channels: 通知先のチャンネル（任意。自動で専用チャンネルも作成します）
     """
-    if channels is None or len(channels) == 0:
-        await ctx.send("通知先チャンネルを1つ以上指定してください。（チャンネルのメンションを利用）")
+    if ctx.guild is None:
+        await ctx.send("このコマンドはサーバー内でのみ使用可能です。")
         return
 
+    # 自動で専用テキストチャンネルを作成する
+    # (チャンネル名は"anime-<アニメ名>"となる。英数字とハイフン以外は除去)
+    safe_channel_name = re.sub(r'[^a-z0-9\-]', '', name.lower().replace(" ", "-"))
+    channel_name = f"anime-{safe_channel_name}"
+    try:
+        auto_channel = await ctx.guild.create_text_channel(channel_name, reason="自動作成: アニメ専用通知チャンネル")
+    except Exception as e:
+        await ctx.send(f"専用チャンネルの自動作成に失敗しました: {str(e)}")
+        return
+
+    # 初期の通知先として自動作成した専用チャンネルIDをリストに追加
+    target_channel_ids = [auto_channel.id]
+
+    # コマンド実行時に他のチャンネル指定があれば追加（重複は省く）
+    if channels is not None and len(channels) > 0:
+        for ch in channels:
+            if ch.id not in target_channel_ids:
+                target_channel_ids.append(ch.id)
+
+    # data_file が未指定の場合は自動生成
     if data_file is None:
         safe_name = re.sub(r'\W+', '', name.lower())
         data_file = f"last_episode_{safe_name}.json"
@@ -261,22 +279,26 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None,
         "name": name,
         "url": url,
         "data_file": data_file,
-        "target_channel_ids": [channel.id for channel in channels]
+        "target_channel_ids": target_channel_ids
     }
     anime_configs.append(new_conf)
     save_anime_configs()
 
+    # 最新エピソード情報の取得
     latest = get_latest_episode(url)
     if latest:
         message = (
             f"**{name}** の設定を追加しました。\n"
+            f"自動作成した専用チャンネル: {auto_channel.mention}\n"
             f"最新エピソード: {latest['number']} {latest['title']}\n"
             f"URL: {latest['url']}"
         )
     else:
-        message = f"**{name}** の設定を追加しましたが、最新エピソード情報は取得できませんでした。"
+        message = (
+            f"**{name}** の設定を追加しましたが、最新エピソード情報は取得できませんでした。\n"
+            f"自動作成した専用チャンネル: {auto_channel.mention}"
+        )
     await ctx.send(message)
-
 
 @anime.command(
     name="remove",
@@ -300,9 +322,7 @@ async def anime_remove(ctx, name: str):
     else:
         await ctx.send(f"**{name}** に該当する設定が見つかりませんでした。")
 
-
 bot.add_command(anime)
-
 
 # -------------------------------
 # バックグラウンドタスク：アニメ更新のチェック
@@ -324,7 +344,6 @@ async def check_anime_updates():
         target_channel_ids = anime_conf["target_channel_ids"]
 
         last_state = load_state(data_file)
-
         try:
             response = requests.get(url, headers=headers)
         except Exception as e:
@@ -378,7 +397,6 @@ async def check_anime_updates():
         else:
             logging.error(f"[{name}] 最新エピソード情報の取得に失敗しました。")
 
-
 # -------------------------------
 # Bot 起動時の処理
 # -------------------------------
@@ -389,6 +407,5 @@ async def on_ready():
     await bot.tree.sync()  # コマンドツリーを同期してスラッシュコマンドを登録
     print(f"Bot {bot.user} としてログインしました！")
     check_anime_updates.start()  # 定期チェック開始
-
 
 bot.run(DISCORD_BOT_TOKEN)

@@ -18,7 +18,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-CHECK_INTERVAL = 3600  # 定期チェック間隔（秒）―例: 3600秒 (1時間)
+CHECK_INTERVAL = 3600  # 定期チェック間隔（秒）―例：3600秒 (1時間)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -33,7 +33,7 @@ ANIME_CONFIG_FILE = os.path.join(BASE_DIR, "anime_configs.json")
 DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
 
 # グローバル変数にアニメ設定情報（リスト）を格納
-anime_configs = []  # 例：[{ "name": ..., "url": ..., "data_file": ..., "target_channel_ids": [...] }, ...]
+anime_configs = []  # 例：[{ "name": "アニメ名", "url": "https://...", "data_file": "last_episode_xxx.json", "target_channel_ids": [チャンネルID1, チャンネルID2] }, ...]
 
 
 # -------------------------------
@@ -140,7 +140,6 @@ def get_latest_episode(url):
         return None
 
     soup = BeautifulSoup(response.text, "html.parser")
-
     container = soup.select_one("div.episodeContainer.itemWrapper.swiper-wrapper")
     if container:
         episodes = container.find_all("a", id=lambda x: x and x.startswith("episodePartId"))
@@ -195,7 +194,7 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-# ※「/c」などのチャット履歴一括削除コマンドは廃止しています
+# ※ チャット履歴一括削除コマンド (/c) は廃止しています
 
 # -------------------------------
 # アニメ設定管理コマンドグループ (/anime)
@@ -204,12 +203,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @commands.hybrid_group(
     name="anime",
     with_app_command=True,
-    description="アニメ通知設定を管理します。（サブコマンド: list, add）"
+    description="アニメ通知設定を管理します。（サブコマンド: list, add, remove）"
 )
 @commands.has_permissions(administrator=True)
 async def anime(ctx):
     if ctx.invoked_subcommand is None:
-        await ctx.send("使用可能なサブコマンド: `list`, `add`")
+        await ctx.send("使用可能なサブコマンド: `list`, `add`, `remove`")
 
 
 @anime.command(
@@ -267,7 +266,6 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None,
     anime_configs.append(new_conf)
     save_anime_configs()
 
-    # 最新エピソード情報の取得
     latest = get_latest_episode(url)
     if latest:
         message = (
@@ -278,6 +276,29 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None,
     else:
         message = f"**{name}** の設定を追加しましたが、最新エピソード情報は取得できませんでした。"
     await ctx.send(message)
+
+
+@anime.command(
+    name="remove",
+    with_app_command=True,
+    description="指定したアニメの通知設定を削除します。"
+)
+async def anime_remove(ctx, name: str):
+    """
+    指定したアニメ名に一致する設定を削除します。
+    """
+    global anime_configs
+    removed = False
+    for conf in anime_configs:
+        if conf.get("name").lower() == name.lower():
+            anime_configs.remove(conf)
+            removed = True
+            break
+    if removed:
+        save_anime_configs()
+        await ctx.send(f"**{name}** の設定を削除しました。")
+    else:
+        await ctx.send(f"**{name}** に該当する設定が見つかりませんでした。")
 
 
 bot.add_command(anime)
@@ -296,7 +317,6 @@ async def check_anime_updates():
             "Chrome/115.0.0.0 Safari/537.36"
         )
     }
-
     for anime_conf in anime_configs:
         name = anime_conf["name"]
         url = anime_conf["url"]
@@ -304,6 +324,7 @@ async def check_anime_updates():
         target_channel_ids = anime_conf["target_channel_ids"]
 
         last_state = load_state(data_file)
+
         try:
             response = requests.get(url, headers=headers)
         except Exception as e:
@@ -315,8 +336,7 @@ async def check_anime_updates():
             continue
 
         soup = BeautifulSoup(response.text, "html.parser")
-
-        # ヘッダーが見つからなければ、アニメは完結と判断する
+        # ヘッダーが見つからなければ、アニメは「完結」と判断する
         header_elem = soup.find("header", class_="attention onlyPcLayout")
         if header_elem is None:
             logging.error(f"[{name}] ヘッダーが見つかりません。アニメが完結していると判断します。")
@@ -345,7 +365,8 @@ async def check_anime_updates():
                         try:
                             await channel.send(
                                 f"**{name}** の新エピソードが公開されました！\n"
-                                f"{new_episode_num} {latest_episode['title']}\n{latest_episode['url']}"
+                                f"{new_episode_num} {latest_episode['title']}\n"
+                                f"{latest_episode['url']}"
                             )
                         except Exception as e:
                             logging.error(f"[{name}] 通知送信エラー (チャンネル {channel_id}): {e}")
@@ -364,14 +385,8 @@ async def check_anime_updates():
 
 @bot.event
 async def on_ready():
-    load_anime_configs()  # 起動時にアニメ設定情報を読み込む
-
-    # コマンドツリーの同期（グローバルコマンドとして反映）
-    await bot.tree.sync()
-    # ※ 開発時に特定ギルドに登録したい場合は以下を利用（必要に応じてコメント解除）
-    # test_guild = discord.Object(id=YOUR_GUILD_ID)
-    # await bot.tree.sync(guild=test_guild)
-
+    load_anime_configs()  # 起動時に設定情報を読み込む
+    await bot.tree.sync()  # コマンドツリーを同期してスラッシュコマンドを登録
     print(f"Bot {bot.user} としてログインしました！")
     check_anime_updates.start()  # 定期チェック開始
 

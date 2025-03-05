@@ -12,30 +12,28 @@ from bs4 import BeautifulSoup
 # 基本設定
 # -------------------------------
 
-# ログ設定（エラーのみ表示）
 logging.basicConfig(
-    level=logging.ERROR,
+    level=logging.ERROR,  # エラーのみ表示
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# 定期チェック間隔（秒）―例: 3600秒 (1時間)
-CHECK_INTERVAL = 3600
+CHECK_INTERVAL = 3600  # 定期チェック間隔（秒）―例: 3600秒 (1時間)
 
-# プロジェクトのディレクトリ（本ファイルのある場所）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 状態保存用ディレクトリ（各アニメの最新状態をファイルに保存）
+# 各アニメの状態を保存するためのディレクトリ
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # アニメ設定情報を管理する JSON ファイル
 ANIME_CONFIG_FILE = os.path.join(BASE_DIR, "anime_configs.json")
 
+# Discord Bot のトークン（自分のトークンに置き換えてください）
 DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
 
 # グローバル変数にアニメ設定情報（リスト）を格納
-anime_configs = []  # 例: [{"name": "アニメ名", "url": "https://...", "data_file": "last_episode_xxx.json", "target_channel_ids": [チャンネルID1, チャンネルID2]}, ...]
+anime_configs = []  # 例：[{ "name": ..., "url": ..., "data_file": ..., "target_channel_ids": [...] }, ...]
 
 
 # -------------------------------
@@ -43,9 +41,7 @@ anime_configs = []  # 例: [{"name": "アニメ名", "url": "https://...", "data
 # -------------------------------
 
 def load_state(data_file):
-    """
-    DATA_DIR 内の指定ファイルから、状態（最後に通知済みのエピソード番号や完結状態）を読み込む。
-    """
+    """DATA_DIR 内の指定ファイルから、最後の通知状態を読み込む。"""
     file_path = os.path.join(DATA_DIR, data_file)
     if os.path.exists(file_path):
         try:
@@ -62,9 +58,7 @@ def load_state(data_file):
 
 
 def save_state(data_file, state):
-    """
-    DATA_DIR 内の指定ファイルに、最新の状態を保存する。
-    """
+    """DATA_DIR 内の指定ファイルに、最新の状態を保存する。"""
     file_path = os.path.join(DATA_DIR, data_file)
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump({"state": state}, f, ensure_ascii=False)
@@ -75,9 +69,7 @@ def save_state(data_file, state):
 # -------------------------------
 
 def load_anime_configs():
-    """
-    ANIME_CONFIG_FILE からアニメ設定情報を読み込み、グローバル変数 anime_configs にセットする。
-    """
+    """ANIME_CONFIG_FILE からアニメ設定情報を読み込み、グローバル変数 anime_configs にセットする。"""
     global anime_configs
     if os.path.exists(ANIME_CONFIG_FILE):
         try:
@@ -87,13 +79,11 @@ def load_anime_configs():
             logging.error(f"アニメ設定の読み込みエラー: {e}")
             anime_configs[:] = []
     else:
-        anime_configs[:] = []  # ファイルがなければ空リスト
+        anime_configs[:] = []
 
 
 def save_anime_configs():
-    """
-    グローバル変数 anime_configs を ANIME_CONFIG_FILE に保存する。
-    """
+    """グローバル変数 anime_configs を ANIME_CONFIG_FILE に保存する。"""
     try:
         with open(ANIME_CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(anime_configs, f, ensure_ascii=False, indent=2)
@@ -107,7 +97,8 @@ def save_anime_configs():
 
 def extract_episode_num(text):
     """
-    「第62話」や「#1」などの文字列から数字部分を抽出し、int 型で返す。
+    「第62話」や「#1」などの文字列から数字部分を抽出して
+    int 型で返す。
     """
     m = re.search(r"第(\d+)話", text)
     if m:
@@ -120,7 +111,16 @@ def extract_episode_num(text):
 
 def get_latest_episode(url):
     """
-    指定された URL のアニメページから最新エピソードの情報（番号、タイトル、リンク、サムネイル）を辞書形式で返す。
+    指定された URL のアニメページから最新エピソードの情報を取得し、
+    辞書形式で返す。
+
+    戻り値の例:
+      {
+        "number": "第62話" または "#1",
+        "title": "エピソードタイトル",
+        "url": "https://...",
+        "thumbnail": "https://..."
+      }
     """
     headers = {
         "User-Agent": (
@@ -141,7 +141,6 @@ def get_latest_episode(url):
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # エピソード一覧の要素を検索する
     container = soup.select_one("div.episodeContainer.itemWrapper.swiper-wrapper")
     if container:
         episodes = container.find_all("a", id=lambda x: x and x.startswith("episodePartId"))
@@ -164,7 +163,6 @@ def get_latest_episode(url):
             base_url = "https://animestore.docomo.ne.jp/animestore/ci_pc/"
             full_url = href if href.startswith("http") else base_url + href
 
-            # サムネイル画像の取得
             img_tag = ep.find("img")
             thumbnail = None
             if img_tag:
@@ -197,28 +195,7 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-# ----------------------------------
-# 補助コマンド：チャット履歴一括削除コマンド
-# ----------------------------------
-@commands.hybrid_command(
-    name="c",
-    with_app_command=True,
-    description="過去14日以内のメッセージを全削除します。"
-)
-@commands.has_permissions(manage_messages=True)
-async def clear_all(ctx: commands.Context):
-    total_deleted = 0
-    while True:
-        deleted = await ctx.channel.purge(limit=100)
-        if not deleted:
-            break
-        total_deleted += len(deleted)
-        await asyncio.sleep(1)  # レート制限対策
-    await ctx.send(f"{total_deleted} 件のメッセージを削除しました。", delete_after=5)
-
-
-bot.add_command(clear_all)
-
+# ※「/c」などのチャット履歴一括削除コマンドは廃止しています
 
 # -------------------------------
 # アニメ設定管理コマンドグループ (/anime)
@@ -227,23 +204,24 @@ bot.add_command(clear_all)
 @commands.hybrid_group(
     name="anime",
     with_app_command=True,
-    description="アニメ通知設定を管理します。（サブコマンド: list, add, remove）"
+    description="アニメ通知設定を管理します。（サブコマンド: list, add）"
 )
 @commands.has_permissions(administrator=True)
 async def anime(ctx):
     if ctx.invoked_subcommand is None:
-        await ctx.send("使用可能なサブコマンド: `list`, `add`, `remove`")
+        await ctx.send("使用可能なサブコマンド: `list`, `add`")
 
 
 @anime.command(
     name="list",
     with_app_command=True,
-    description="現在登録されているアニメ設定一覧を表示します。"
+    description="現在登録されているアニメ設定の一覧を表示します。"
 )
 async def anime_list(ctx):
     if not anime_configs:
         await ctx.send("アニメの設定は登録されていません。")
         return
+
     msg_lines = ["**登録されているアニメ設定:**"]
     for idx, conf in enumerate(anime_configs, start=1):
         channels = ", ".join(str(cid) for cid in conf.get("target_channel_ids", []))
@@ -259,17 +237,17 @@ async def anime_list(ctx):
 @anime.command(
     name="add",
     with_app_command=True,
-    description="新たなアニメ通知設定を追加します。"
+    description="新たなアニメ通知設定を追加し、最新エピソード情報を表示します。"
 )
 async def anime_add(ctx, name: str, url: str, data_file: str = None,
                     channels: commands.Greedy[discord.TextChannel] = None):
     """
-    新しいアニメ設定を追加するためのコマンドです。
+    新しいアニメ設定を追加します。
 
     パラメータ:
       • name: アニメの名称
       • url: アニメページの URL
-      • data_file (任意): 通知状態を保存するファイル名（未指定の場合自動生成）
+      • data_file (任意): 通知状態を保存するファイル名（未指定の場合、自動生成）
       • channels: 通知先のチャンネル（1つ以上指定してください）
     """
     if channels is None or len(channels) == 0:
@@ -288,27 +266,18 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None,
     }
     anime_configs.append(new_conf)
     save_anime_configs()
-    await ctx.send(f"**{name}** の設定を追加しました。")
 
-
-@anime.command(
-    name="remove",
-    with_app_command=True,
-    description="指定したアニメの通知設定を削除します。"
-)
-async def anime_remove(ctx, name: str):
-    global anime_configs
-    removed = False
-    for conf in anime_configs:
-        if conf.get("name").lower() == name.lower():
-            anime_configs.remove(conf)
-            removed = True
-            break
-    if removed:
-        save_anime_configs()
-        await ctx.send(f"**{name}** の設定を削除しました。")
+    # 最新エピソード情報の取得
+    latest = get_latest_episode(url)
+    if latest:
+        message = (
+            f"**{name}** の設定を追加しました。\n"
+            f"最新エピソード: {latest['number']} {latest['title']}\n"
+            f"URL: {latest['url']}"
+        )
     else:
-        await ctx.send(f"**{name}** に該当する設定が見つかりませんでした。")
+        message = f"**{name}** の設定を追加しましたが、最新エピソード情報は取得できませんでした。"
+    await ctx.send(message)
 
 
 bot.add_command(anime)
@@ -327,6 +296,7 @@ async def check_anime_updates():
             "Chrome/115.0.0.0 Safari/537.36"
         )
     }
+
     for anime_conf in anime_configs:
         name = anime_conf["name"]
         url = anime_conf["url"]
@@ -334,7 +304,6 @@ async def check_anime_updates():
         target_channel_ids = anime_conf["target_channel_ids"]
 
         last_state = load_state(data_file)
-
         try:
             response = requests.get(url, headers=headers)
         except Exception as e:
@@ -347,7 +316,7 @@ async def check_anime_updates():
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # ヘッダーがない → アニメ完結とみなす
+        # ヘッダーが見つからなければ、アニメは完結と判断する
         header_elem = soup.find("header", class_="attention onlyPcLayout")
         if header_elem is None:
             logging.error(f"[{name}] ヘッダーが見つかりません。アニメが完結していると判断します。")
@@ -395,11 +364,11 @@ async def check_anime_updates():
 
 @bot.event
 async def on_ready():
-    load_anime_configs()  # 起動時に設定情報を読み込む
+    load_anime_configs()  # 起動時にアニメ設定情報を読み込む
 
     # コマンドツリーの同期（グローバルコマンドとして反映）
     await bot.tree.sync()
-    # 開発用に特定のギルドにのみ登録したい場合はこちらを利用（必要に応じてコメントアウトを外す）
+    # ※ 開発時に特定ギルドに登録したい場合は以下を利用（必要に応じてコメント解除）
     # test_guild = discord.Object(id=YOUR_GUILD_ID)
     # await bot.tree.sync(guild=test_guild)
 

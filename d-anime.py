@@ -23,8 +23,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# アニメ設定情報保存用ファイル
-ANIME_CONFIG_FILE = os.path.join(BASE_DIR, "anime_configs.json")
+# 保存先ディレクトリを絶対パスで指定
+CONFIG_DIR = "/Users/kotohasaki/Documents/Py/d-anime"
+os.makedirs(CONFIG_DIR, exist_ok=True)
+
+# アニメ設定情報保存用ファイルのパスを更新
+ANIME_CONFIG_FILE = os.path.join(CONFIG_DIR, "anime_configs.json")
+
 
 # Bot のトークン（必ずご自身のものに置き換えてください）
 DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
@@ -48,15 +53,41 @@ anime_configs = []
 # -------------------------------
 # ヘルパー関数：安全な応答
 # -------------------------------
-async def safe_respond(ctx, content, ephemeral=True):
-    # Interaction (Slash コマンド) の場合はエフェメラル
+async def safe_respond(ctx, content, ephemeral=False):
+    # ephemeral の初期値を False に設定
     if hasattr(ctx, "interaction") and ctx.interaction:
         if not ctx.interaction.response.is_done():
             await ctx.interaction.response.send_message(content, ephemeral=ephemeral)
         else:
-            await ctx.send(content, delete_after=5)
+            # 直接送信（delete_after を設定しない）
+            await ctx.send(content)
     else:
-        await ctx.send(content, delete_after=5)
+        await ctx.send(content)
+
+def is_anime_ongoing(url):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/115.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        response = requests.get(url, headers=headers)
+    except Exception as e:
+        logging.error(f"[{url}] HTML取得エラー: {e}")
+        # エラー時は安全のため「追加不可」とする
+        return False
+    if response.status_code != 200:
+        logging.error(f"[{url}] HTML取得失敗 (ステータスコード: {response.status_code})")
+        return False
+    soup = BeautifulSoup(response.text, "html.parser")
+    # <p class="note schedule">～更新予定</p> が存在すれば未完結とみなす
+    note_schedule = soup.find("p", class_="note schedule")
+    if note_schedule and "更新予定" in note_schedule.get_text():
+        return True
+    return False
+
 
 # -------------------------------
 # 状態管理用関数
@@ -210,7 +241,9 @@ async def anime_list(ctx):
                 f"   チャンネルID: {channels}"
             )
         msg = "\n".join(msg_lines)
-    await safe_respond(ctx, msg, ephemeral=True)
+    await safe_respond(ctx, msg, ephemeral=False)
+
+
 
 @anime.command(
     name="add",
@@ -219,26 +252,42 @@ async def anime_list(ctx):
 )
 async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: commands.Greedy[discord.TextChannel] = None):
     if ctx.guild is None:
-        await safe_respond(ctx, "このコマンドはサーバー内でのみ使用可能です。", ephemeral=True)
+        await safe_respond(ctx, "このコマンドはサーバー内でのみ使用可能です。", ephemeral=False)
         return
     for conf in anime_configs:
         if conf.get("name").lower() == name.lower():
-            await safe_respond(ctx, f"**{name}** は既に追加済みです。", ephemeral=True)
+            await safe_respond(ctx, f"**{name}** は既に追加済みです。", ephemeral=False)
             return
+
+    # 追加前に完結済み（更新予定情報がない）かチェック
+    if not is_anime_ongoing(url):
+        await safe_respond(ctx, f"**{name}** は完結済みのアニメのため追加できません。", ephemeral=False)
+        return
+
     try:
         category = ctx.guild.get_channel(CATEGORY_ID)
         if category is None:
-            await safe_respond(ctx, "指定されたカテゴリが見つかりません。", ephemeral=True)
+            await safe_respond(ctx, "指定されたカテゴリが見つかりません。", ephemeral=False)
             return
         auto_channel = await ctx.guild.create_text_channel(name, category=category, reason="自動作成: 専用通知チャンネル")
     except Exception as e:
-        await safe_respond(ctx, f"専用チャンネルの作成に失敗しました: {e}", ephemeral=True)
+        await safe_respond(ctx, f"専用チャンネルの作成に失敗しました: {e}", ephemeral=False)
         return
+
+    # 自動作成された専用チャンネルIDをリストに追加
     target_channel_ids = [auto_channel.id]
+
+    # オプションで指定されたチャンネルがあれば追加
     if channels is not None:
         for ch in channels:
             if ch.id not in target_channel_ids:
                 target_channel_ids.append(ch.id)
+
+    # 追加通知用のチャンネルID（例: 1346005112405098528）を必ず追加
+    additional_notify_channel_id = 1346005112405098528
+    if additional_notify_channel_id not in target_channel_ids:
+        target_channel_ids.append(additional_notify_channel_id)
+
     if data_file is None:
         safe_name = re.sub(r'\W+', '', name.lower())
         data_file = f"last_episode_{safe_name}.json"
@@ -250,6 +299,7 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
     }
     anime_configs.append(new_conf)
     save_anime_configs()
+
     latest = get_latest_episode(url)
     if latest:
         auto_notify_msg = (
@@ -272,7 +322,10 @@ async def anime_add(ctx, name: str, url: str, data_file: str = None, channels: c
             f"**{name}** を追加しましたが、最新エピソード情報は取得できませんでした。\n"
             f"専用チャンネル: {auto_channel.mention}"
         )
-    await safe_respond(ctx, addition_msg, ephemeral=True)
+    await safe_respond(ctx, addition_msg, ephemeral=False)
+
+
+
 
 @anime.command(
     name="remove",
@@ -298,10 +351,20 @@ async def anime_remove(ctx, name: str):
                 except Exception as e:
                     logging.error(f"専用チャンネル削除エラー: {e}")
         msg = f"**{name}** の設定を削除しました。"
-        await safe_respond(ctx, msg, ephemeral=True)
+        await safe_respond(ctx, msg, ephemeral=False)
     else:
         msg = f"**{name}** の設定は見つかりませんでした。"
-        await safe_respond(ctx, msg, ephemeral=True)
+        await safe_respond(ctx, msg, ephemeral=False)
+
+@anime_remove.autocomplete("name")
+async def anime_remove_autocomplete(interaction: discord.Interaction, current: str):
+    load_anime_configs()  # 最新情報を反映する
+    return [
+        discord.app_commands.Choice(name=conf["name"], value=conf["name"])
+        for conf in anime_configs if current.lower() in conf["name"].lower()
+    ]
+
+
 
 bot.add_command(anime)
 
@@ -317,11 +380,33 @@ async def check_anime_updates():
             "Chrome/115.0.0.0 Safari/537.36"
         )
     }
+    # 指定の完結済み用カテゴリを取得
+    completed_category = bot.get_channel(1347062290641457214)
+    if completed_category is None:
+        logging.error("完結済み用カテゴリ (ID: 1347062290641457214) が見つかりません。")
+
     for anime_conf in anime_configs:
         name = anime_conf["name"]
         url = anime_conf["url"]
         data_file = anime_conf["data_file"]
         target_channel_ids = anime_conf["target_channel_ids"]
+
+        # まずは、完結しているかをチェック
+        if not is_anime_ongoing(url):
+            # 完結している場合、専用チャンネル（先頭のID）を完結用カテゴリに移動
+            if target_channel_ids:
+                dedicated_channel_id = target_channel_ids[0]
+                channel = bot.get_channel(dedicated_channel_id)
+                if channel and completed_category and channel.category_id != completed_category.id:
+                    try:
+                        await channel.edit(category=completed_category, reason="アニメ完結に伴い専用チャンネルの移動")
+                        logging.info(f"[{name}] 専用チャンネルを完結カテゴリに移動しました。")
+                    except Exception as e:
+                        logging.error(f"[{name}] 専用チャンネル移動エラー: {e}")
+            # 完結アニメは新エピソード更新もないため、ここでスキップ
+            continue
+
+        # アニメが未完結の場合、通常の新エピソード更新チェックを実施
         last_state = load_state(data_file)
         try:
             response = requests.get(url, headers=headers)
@@ -331,7 +416,7 @@ async def check_anime_updates():
         if response.status_code != 200:
             logging.error(f"[{name}] ページ取得失敗 (ステータスコード: {response.status_code})")
             continue
-        soup = BeautifulSoup(response.text, "html.parser")
+
         latest_episode = get_latest_episode(url)
         if latest_episode:
             new_episode_num = latest_episode["number"]
@@ -354,6 +439,7 @@ async def check_anime_updates():
                 logging.info(f"[{name}] {new_episode_num} は既に通知済みです。")
         else:
             logging.error(f"[{name}] 最新エピソード情報の取得に失敗しました。")
+
 
 # -------------------------------
 # Bot 起動時の処理

@@ -32,10 +32,10 @@ ANIME_CONFIG_FILE = os.path.join(CONFIG_DIR, "anime_configs.json")
 
 
 # Bot のトークン（必ずご自身のものに置き換えてください）
-DISCORD_BOT_TOKEN = "MTM0NjAwMDg1Mzg0ODU1OTYzNw.G7uIF8.3Ipc4k0ODQIGAPFbtjSf1oPK_1rn-V9MVO47pk"
+DISCORD_BOT_TOKEN = "ここにトークン"
 
 # 自動作成される専用チャンネルは、指定のカテゴリ内に作成（カテゴリID）
-CATEGORY_ID = 1346005111964700684
+CATEGORY_ID = 123456789
 
 # グローバル変数：アニメ設定情報リスト
 anime_configs = []
